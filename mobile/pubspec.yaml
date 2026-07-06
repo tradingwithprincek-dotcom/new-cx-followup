@@ -1,0 +1,30 @@
+name: clientbook_ai
+description: ClientBook AI — personal CRM for retail sales executives
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.5.0                     # HTTP client with interceptors for token refresh
+  flutter_secure_storage: ^9.2.2   # stores JWT/refresh token securely on-device
+  flutter_riverpod: ^2.5.1        # state management
+  go_router: ^14.2.0              # role-based routing between shells
+  sqflite: ^2.3.3                 # offline cache (Milestone 2+)
+  connectivity_plus: ^6.0.5       # offline/online detection
+  intl: ^0.19.0
+  cupertino_icons: ^1.0.8
+  flutter_local_notifications: ^17.2.2   # Follow-up reminder notifications (Milestone 3)
+  timezone: ^0.9.4                       # required by flutter_local_notifications for scheduled reminders
+  table_calendar: ^3.1.2                 # Follow-up Calendar View (Milestone 3)
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

@@ -1,0 +1,239 @@
+// ClientBook AI — Prisma schema
+// Milestone 1: User, Store, RefreshToken fully wired to the API.
+// Milestone 2: Customer + Interaction (Timeline) fully wired to the API.
+// Milestone 3: FollowUp fully wired to the API (this drop).
+// Wishlist/NonBuyerEntry tables are defined now (so foreign keys never need
+// to churn) but their endpoints ship in later milestones as noted in
+// ARCHITECTURE.md.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SALES_EXEC
+  STORE_MANAGER
+  ADMIN
+}
+
+enum CustomerStatus {
+  VIP
+  REGULAR
+  INACTIVE
+  LOST
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNDISCLOSED
+}
+
+// Milestone 3: lifecycle status of a Follow-up task itself.
+// (Call-outcome-style values like "no answer"/"busy" belong on the
+// Interaction/call-log record in Milestone 5, not here — this enum only
+// tracks whether the follow-up task is open, done, moved, or dropped.)
+enum FollowUpStatus {
+  PENDING
+  COMPLETED
+  RESCHEDULED
+  CANCELLED
+}
+
+// Milestone 3: how the rep plans to reach the customer for this follow-up.
+enum FollowUpType {
+  CALL
+  WHATSAPP
+  VISIT
+}
+
+// Milestone 3: drives sort order + the "High Priority" filter chip.
+enum FollowUpPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum InteractionType {
+  PURCHASE
+  CALL
+  WHATSAPP
+  VISIT
+  REMINDER
+  NOTE
+  WISHLIST
+  VOICE_NOTE
+}
+
+// ---------- Milestone 1: live tables ----------
+
+model Store {
+  id        String   @id @default(uuid())
+  name      String
+  code      String   @unique
+  city      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users     User[]
+  customers Customer[]
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  phone        String?  @unique
+  passwordHash String
+  fullName     String
+  role         Role
+  storeId      String
+  store        Store    @relation(fields: [storeId], references: [id])
+  isActive     Boolean  @default(true)
+  virtualPhoneNumber String? // assigned in Milestone 5 (Calling)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  refreshTokens RefreshToken[]
+
+  // A sales exec "owns" these; managers/admins do not get these relations used against them
+  customers     Customer[]      @relation("CustomerOwner")
+  interactions  Interaction[]
+  followUps     FollowUp[]
+  wishlistItems WishlistItem[]
+  nonBuyers     NonBuyerEntry[]
+
+  @@index([storeId, role])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ---------- Customer/Interaction: live since Milestone 2. FollowUp: live since Milestone 3 ----------
+
+model Customer {
+  id                String         @id @default(uuid())
+  salesExecutiveId  String
+  salesExecutive    User           @relation("CustomerOwner", fields: [salesExecutiveId], references: [id])
+  storeId           String
+  store             Store          @relation(fields: [storeId], references: [id])
+
+  fullName          String
+  photoUrl          String?
+  mobileNumber      String
+  email             String?
+  birthday          DateTime?
+  anniversary       DateTime?
+  gender            Gender?
+
+  customerSince     DateTime       @default(now())
+  lastVisitAt       DateTime?
+  totalShopping     Decimal        @default(0) @db.Decimal(12, 2)
+  lifetimeSpend     Decimal        @default(0) @db.Decimal(12, 2)
+  numberOfPurchases Int            @default(0)
+  averageBill       Decimal        @default(0) @db.Decimal(12, 2)
+  favouriteCategory String?
+  favouriteProduct  String?
+  status            CustomerStatus @default(REGULAR)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  interactions  Interaction[]
+  followUps     FollowUp[]
+  wishlistItems WishlistItem[]
+
+  // Row is only ever queryable by its own salesExecutiveId — enforced in the
+  // repository layer, see backend/src/common/ scoping helper added in Milestone 2.
+  @@index([salesExecutiveId, status])
+  @@index([mobileNumber])
+}
+
+model Interaction {
+  id         String           @id @default(uuid())
+  customerId String
+  customer   Customer         @relation(fields: [customerId], references: [id])
+  salesExecutiveId String
+  salesExecutive   User        @relation(fields: [salesExecutiveId], references: [id])
+  type       InteractionType
+  notes      String?
+  metadata   Json?            // e.g. call duration, WhatsApp message body, purchase invoice id
+  occurredAt DateTime         @default(now())
+
+  @@index([customerId, occurredAt])
+}
+
+model FollowUp {
+  id               String           @id @default(uuid())
+  customerId       String
+  customer         Customer         @relation(fields: [customerId], references: [id])
+  salesExecutiveId String
+  salesExecutive   User             @relation(fields: [salesExecutiveId], references: [id])
+
+  type             FollowUpType
+  priority         FollowUpPriority @default(MEDIUM)
+  status           FollowUpStatus   @default(PENDING)
+  notes            String?
+
+  // Combined reminder date + time (single instant); the mobile date/time
+  // pickers write into this one field so "today/tomorrow/this week/overdue"
+  // filters only ever compare against one column.
+  reminderAt       DateTime
+  completedAt      DateTime?
+
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  // "Missed" is deliberately NOT a stored status — it's derived
+  // (status = PENDING AND reminderAt < now) so a follow-up that becomes
+  // overdue doesn't need a background job to flip a column, and a rep
+  // rescheduling it is a single, obviously-correct state transition.
+  @@index([salesExecutiveId, status, reminderAt])
+  @@index([customerId])
+}
+
+model WishlistItem {
+  id                   String   @id @default(uuid())
+  customerId           String
+  customer             Customer @relation(fields: [customerId], references: [id])
+  salesExecutiveId     String
+  salesExecutive       User     @relation(fields: [salesExecutiveId], references: [id])
+  sku                  String
+  photoUrl             String?
+  price                Decimal  @db.Decimal(12, 2)
+  category              String
+  priority             Int      @default(1)
+  expectedPurchaseMonth DateTime?
+  notifiedAt           DateTime?
+  createdAt            DateTime @default(now())
+
+  @@index([salesExecutiveId, expectedPurchaseMonth])
+}
+
+model NonBuyerEntry {
+  id               String   @id @default(uuid())
+  salesExecutiveId String
+  salesExecutive   User     @relation(fields: [salesExecutiveId], references: [id])
+  visitorName      String?
+  visitorPhone     String?
+  reason           String   // Price High / Didn't Like Design / etc, free text + enum on API layer
+  customNotes      String?
+  reminderDate     DateTime?
+  createdAt        DateTime @default(now())
+
+  @@index([salesExecutiveId, reminderDate])
+}
